@@ -30,7 +30,7 @@ except Exception:
     PIL_AVAILABLE = False
 
 
-# ---------- ПОДКЛЮЧЕНИЕ (как в твоей рабочей версии) ----------
+# ---------- ПОДКЛЮЧЕНИЕ ----------
 class ModbusInputReader:
     def __init__(self, port="COM3", baudrate=115200, unit_id=2, timeout=0.1):
         self.port = port
@@ -58,7 +58,6 @@ class ModbusInputReader:
                 self.client = None
 
     def read_ch(self, address=0, count=1):
-        # В pymodbus 3.x проверяем client.connected
         if not self.client or not getattr(self.client, "connected", False):
             return None
         try:
@@ -79,10 +78,11 @@ class ModbusInputReader:
         except Exception:
             return False
 
+
 class ModbusGUI(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Modbus — пусковые токи: 1 канал, 10 мс, Амперы, Excel")
+        self.title("Modbus — пусковые токи: 1 канал, 10 мс, Амперы (0.000), Excel")
         self.geometry("940x740")
         self.minsize(900, 700)
 
@@ -100,7 +100,7 @@ class ModbusGUI(tk.Tk):
         self._set_trend_window(self.window_seconds)
 
         # Буферы
-        self.series_all = []     # [(datetime, A_int)] — все точки (целые А)
+        self.series_all = []     # [(datetime, A_int)] — все точки (целые А, для устойчивости логики)
         self.trend_buffer = []   # [(datetime, [8 значений в А (int/None)])] — для отрисовки
 
         # Отображение портов
@@ -230,8 +230,8 @@ class ModbusGUI(tk.Tk):
         self.status_var = tk.StringVar(value="Отключено")
         ttk.Label(right_box, textvariable=self.status_var).pack(side=tk.LEFT)
 
-        # --- Текущее значение (в А) ---
-        mid = ttk.LabelFrame(root, text="Текущее значение (А)", padding=10)
+        # --- Текущее значение (в А, 0.000) ---
+        mid = ttk.LabelFrame(root, text="Текущее значение (A, формат 0.000)", padding=10)
         mid.pack(fill=tk.X, pady=(10, 0))
         rowv = ttk.Frame(mid); rowv.pack(fill=tk.X)
         ttk.Label(rowv, text="Канал:", style="Header.TLabel").pack(side=tk.LEFT, padx=(0, 8))
@@ -242,7 +242,7 @@ class ModbusGUI(tk.Tk):
         self.value_label.pack(side=tk.LEFT)
 
         # --- Тренд (Canvas) ---
-        trend_frame = ttk.LabelFrame(root, text="Тренд (А)", padding=10)
+        trend_frame = ttk.LabelFrame(root, text="Тренд (A, формат подписей 0.000)", padding=10)
         trend_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
 
         self.trend_canvas = tk.Canvas(trend_frame, height=380, background="#ffffff",
@@ -251,7 +251,7 @@ class ModbusGUI(tk.Tk):
         self.trend_canvas.bind("<Configure>", lambda e: self._redraw_trend())
 
         ttk.Label(trend_frame,
-                  text="Сетка: 1 с (основная), 100 мс (минорная). Значения — целые Амперы. Окно — выбирается сверху.",
+                  text="Сетка: 1 с (основная), 100 мс (минорная). Значения — отображаются как 0.000 A.",
                   style="Hint.TLabel").pack(side=tk.LEFT, pady=(6, 0))
 
         # Закрытие окна — корректная остановка/отключение
@@ -260,7 +260,7 @@ class ModbusGUI(tk.Tk):
     # ---------- helpers ----------
     def _set_trend_window(self, seconds):
         self.window_seconds = int(seconds)
-        self.trend_buffer_max = self.window_seconds * self.points_per_second  # rolling, перезаполняем
+        self.trend_buffer_max = self.window_seconds * self.points_per_second
 
     def _on_trend_window_change(self, *_):
         label = self.trend_window_combo.get()
@@ -357,8 +357,8 @@ class ModbusGUI(tk.Tk):
         kind, payload = item
         if kind == "values":
             ts, a_int = payload
-            # текущий лейбл
-            self.value_label.configure(text=("—" if a_int is None else f"{a_int:d} A"))
+            # текущее значение в формате 0.000
+            self.value_label.configure(text=("—" if a_int is None else f"{float(a_int):.3f} A"))
             # буфер тренда: только активный канал в своей позиции
             a_line = [None]*8
             ch = max(1, min(8, int(self.fast_channel_var.get()))) - 1
@@ -504,7 +504,7 @@ class ModbusGUI(tk.Tk):
                     x2 = left_pad + plot_w * (idx2 / max(1, n_full - 1))
                     c.create_line(x2, 1, x2, h-2, fill="#fafafa")
 
-        # адаптивная децимация — рисуем не более чем в 1 точку на пиксель
+        # адаптивная децимация — не более 1 точки на пиксель
         step = max(1, int((n_full + plot_w - 1) // plot_w))
         pts = []
         for i in range(0, n_full, step):
@@ -522,10 +522,11 @@ class ModbusGUI(tk.Tk):
             for j in range(1, len(pts)):
                 c.create_line(pts[j-1][0], pts[j-1][1], pts[j][0], pts[j][1], fill="#1f77b4", width=2)
 
-        c.create_text(6, 12, text=f"max={vmax:d} A", fill="#666666", anchor="w")
-        c.create_text(6, h-12, text=f"min={vmin:d} A", fill="#666666", anchor="w")
+        # подписи min/max в формате 0.000
+        c.create_text(6, 12, text=f"max={float(vmax):.3f} A", fill="#666666", anchor="w")
+        c.create_text(6, h-12, text=f"min={float(vmin):.3f} A", fill="#666666", anchor="w")
 
-    # ---------- Подключение (как было) ----------
+    # ---------- Подключение ----------
     def on_connect(self):
         if self.is_connected:
             return
@@ -571,9 +572,7 @@ class ModbusGUI(tk.Tk):
         self.start_btn.configure(state=tk.NORMAL)
 
     def on_disconnect(self):
-        # Останавливаем опрос, если идёт
         self.on_stop()
-        # восстановим каналы, если мы их трогали
         self._restore_channels()
         if self.reader:
             try:
@@ -649,7 +648,7 @@ class ModbusGUI(tk.Tk):
         self._timer_start()
 
     def _worker_loop(self, fast_channel):
-        """1 канал, шаг 10 мс. Везде работаем в А (целые)."""
+        """1 канал, шаг 10 мс. Везде работаем в А (целые в логике, 0.000 в отображении/Excel)."""
         address = fast_channel - 1
         interval_s = self.sample_interval_ms / 1000.0
         ui_update_s = 0.08
@@ -689,7 +688,6 @@ class ModbusGUI(tk.Tk):
         except Exception:
             pass
         finally:
-            # При остановке не трогаем подключение, но возвращаем каналы
             self._restore_channels()
             self.data_queue.put(("status", "Подключено" if self.is_connected else "Отключено"))
 
@@ -754,7 +752,7 @@ class ModbusGUI(tk.Tk):
 
             wb = Workbook()
 
-            # --- Data: все точки (А) ---
+            # --- Data: все точки (A, формат 0.000) ---
             ws_data = wb.active
             ws_data.title = "Data"
 
@@ -767,7 +765,7 @@ class ModbusGUI(tk.Tk):
             ws_data["A6"]  = "Канал:";                  ws_data["B6"]  = fast_idx
             ws_data["A7"]  = "Интервал опроса (мс):";   ws_data["B7"]  = self.sample_interval_ms
             ws_data["A8"]  = "Окно (с):";               ws_data["B8"]  = self.window_seconds
-            ws_data["A9"]  = "Единицы:";                ws_data["B9"]  = "Амперы (целые)"
+            ws_data["A9"]  = "Единицы:";                ws_data["B9"]  = "Амперы (0.000)"
 
             header_row = 11
             ws_data.cell(row=header_row, column=1, value="Время")
@@ -779,11 +777,12 @@ class ModbusGUI(tk.Tk):
             for i, (ts, a) in enumerate(rows, start=row_start):
                 c_time = ws_data.cell(row=i, column=1, value=ts)
                 c_time.number_format = "yyyy-mm-dd hh:mm:ss.000"
-                ws_data.cell(row=i, column=2, value=int(a))
+                cell_val = ws_data.cell(row=i, column=2, value=float(a))
+                cell_val.number_format = "0.000"
                 dt_s = (ts - t0).total_seconds()
                 ws_data.cell(row=i, column=3, value=float(dt_s))
 
-            # --- Changes: только изменения (А) ---
+            # --- Changes: только изменения (A, формат 0.000) ---
             ws_changes = wb.create_sheet("Changes")
             ws_changes["A1"] = "Время"
             ws_changes["B1"] = f"Канал{fast_idx} (A)"
@@ -794,24 +793,24 @@ class ModbusGUI(tk.Tk):
                 for i, (ts, a) in enumerate(changes, start=ch_start):
                     c_time = ws_changes.cell(row=i, column=1, value=ts)
                     c_time.number_format = "yyyy-mm-dd hh:mm:ss.000"
-                    ws_changes.cell(row=i, column=2, value=int(a))
+                    cell_val = ws_changes.cell(row=i, column=2, value=float(a))
+                    cell_val.number_format = "0.000"
                     ws_changes.cell(row=i, column=3, value=float((ts - t0).total_seconds()))
                 ch_min_row = ch_start
                 ch_max_row = ch_start + len(changes) - 1
             else:
                 ch_min_row = ch_max_row = 2  # пусто — график не построится
 
-            # --- Trends: график по листу Changes ---
+            # --- Trends: график по листу Changes, ось Y -> 0.000 ---
             ws_chart = wb.create_sheet("Trends")
             if changes:
                 chart = ScatterChart()
-                chart.title = f"Channel {fast_idx} — only changes (A)"
+                chart.title = f"Channel {fast_idx} — only changes (A, 0.000)"
                 chart.style = 10
                 chart.legend = None
                 chart.x_axis.title = "Time, s"; chart.x_axis.number_format = "ss.000"
-                chart.y_axis.title = "Current, A"
+                chart.y_axis.title = "Current, A"; chart.y_axis.number_format = "0.000"
 
-                # автошкала с паддингом
                 y_vals = [a for _, a in changes]
                 if y_vals:
                     y_min, y_max = min(y_vals), max(y_vals)
